@@ -1,40 +1,44 @@
-version: "3.9"
+version: "3.7" # Compose file format version
 
 services:
-  docker:
-    image: docker:24-dind
-    privileged: true
+  docker: # Docker-in-Docker service (DinD)
+    image: docker:dind # Official Docker-in-Docker image
+    container_name: docker
+    privileged: true # Required for DinD to run Docker inside Docker
     environment:
-      - DOCKER_TLS_CERTDIR=/certs
-      - DOCKER_TLS_SAN=docker,localhost,jenkins
+      DOCKER_TLS_CERTDIR: /certs # Enables TLS for secure Docker communication
     volumes:
-      - dind-storage:/var/lib/docker
-      - jenkins-docker-certs:/certs/client
+      - docker-certs:/certs/client # Store TLS certificates
+      - docker-data:/var/lib/docker # Persist Docker image/layer cache
+    networks:
+      jenkins:
+        aliases:
+          - docker # Makes service reachable as "docker" within the network
+
+  jenkins: # Jenkins service
+    build: . # Builds Jenkins from local Dockerfile (extends official Jenkins LTS)
+    container_name: jenkins
+    user: root # Run Jenkins as root to allow Docker commands inside container
+    depends_on:
+      - docker # Wait for DinD to be ready before starting Jenkins
+    ports:
+      - "8080:8080" # Expose Jenkins Web UI
+      - "50000:50000" # Jenkins agent communication port
+    environment:
+      DOCKER_HOST: tcp://docker:2376 # Connect Jenkins to DinD over TCP
+      DOCKER_CERT_PATH: /certs/client # Path to Docker TLS certs
+      DOCKER_TLS_VERIFY: 1 # Enforce TLS verification
+    volumes:
+      - jenkins-data:/var/jenkins_home # Persist Jenkins configuration and jobs
+      - docker-certs:/certs/client:ro # Mount Docker certs as read-only
     networks:
       - jenkins
-    ports:
-      - "2376:2376"
-
-  jenkins:
-    image: jenkins/jenkins:lts
-    user: root
-    environment:
-      - DOCKER_HOST=tcp://docker:2376
-      - DOCKER_TLS_VERIFY=1
-      - DOCKER_CERT_PATH=/certs/client
-    volumes:
-      - jenkins-data:/var/jenkins_home
-      - jenkins-docker-certs:/certs/client:ro
-    networks:
-      - jenkins
-    ports:
-      - "8080:8080"
-      - "50000:50000"
-
-networks:
-  jenkins: {}
 
 volumes:
-  jenkins-data: {}
-  jenkins-docker-certs: {}
-  dind-storage: {}
+  jenkins-data: # Volume for Jenkins home directory
+  docker-certs: # Volume for storing TLS certificates
+  docker-data: # Volume for Docker image and layer cache
+
+networks:
+  jenkins:
+    driver: bridge # Bridge network for communication between Jenkins and DinD
